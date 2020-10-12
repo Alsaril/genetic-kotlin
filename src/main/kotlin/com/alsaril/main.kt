@@ -52,73 +52,34 @@ class GeneticFunctionHelper(
     private fun _newInstance(random: Random) = randomNode(initialDepth, random)
 
     private fun _mutate(t: Function, random: Random): Function { // find random node and replace it with random
+        if (leaf(t)) return t
         if (random.nextDouble() < mutationChance) {
-            return randomNode(initialDepth, random)
+           return when (random.nextInt(5)) {
+                0 -> TwoArgFunction(TwoArgFunction.Type.MUL, Const(1 + (random.nextDouble() - 0.5) / 5), t) // multiply subtree with k around 1
+                1 -> TwoArgFunction(TwoArgFunction.Type.ADD, Const((random.nextDouble() - 0.5) / 5), t) // add to subtree shift around 0
+                2 -> randomNode(initialDepth, random) // generate brand new subtree
+                3 -> when (t) { // remove node from tree
+                    is OneArgFunction -> t.arg
+                    is TwoArgFunction -> if (random.nextBoolean()) t.left else t.right
+                    else -> throw IllegalStateException("wtf")
+                }
+                4 -> if (random.nextBoolean()) { // add one argument node
+                    val type = random.nextElement(OneArgFunction.Type.values())
+                    OneArgFunction(type, t)
+                } else { // add two argument node
+                    val type = random.nextElement(TwoArgFunction.Type.values())
+                    val left = random.nextBoolean()
+                    TwoArgFunction(type, if (left) t else randomNode(initialDepth, random), if (!left) t else randomNode(initialDepth, random))
+                }
+                else -> throw IllegalStateException("wtf")
+            }
         }
         return when (t) {
-            is Const -> {
-                if (random.nextDouble() > mutationChance) t
-                if (random.nextBoolean()) Const(t.value * (1 + (random.nextDouble() - 0.5) / 5))
-                else randomNode(initialDepth, random)
-            }
-            is Variable -> {
-                if (random.nextDouble() < mutationChance) {
-                    when (random.nextInt(3)) {
-                        0 -> TwoArgFunction(TwoArgFunction.Type.MUL, Const(1 + (random.nextDouble() - 0.5) / 5), t)
-                        1 -> TwoArgFunction(TwoArgFunction.Type.ADD, Const(random.nextDouble()), t)
-                        2 ->  randomNode(initialDepth, random)
-                        else -> throw IllegalStateException("wtf")
-                    }
-                } else t
-            }
-            is OneArgFunction -> {
-                if (random.nextDouble() < mutationChance) {
-                    if (random.nextBoolean()) {
-                        val node = randomNode(initialDepth, random)
-                        if (node is OneArgFunction) {
-                            return OneArgFunction(node.type, t.arg)
-                        } else if (node is TwoArgFunction) {
-                            val left = random.nextBoolean()
-                            return TwoArgFunction(
-                                node.type,
-                                if (left) node.left else t.arg,
-                                if (!left) node.right else t.arg
-                            )
-                        }
-                    } else {
-                        return t.arg
-                    }
-                }
-                OneArgFunction(t.type, mutate(t.arg, random))
-            }
-            is TwoArgFunction -> if (random.nextBoolean()) { // to the left
-                if (random.nextDouble() < mutationChance) {
-                    if (random.nextBoolean()) {
-                        val node = randomNode(initialDepth, random)
-                        if (node is OneArgFunction) {
-                            return OneArgFunction(node.type, t.left)
-                        } else if (node is TwoArgFunction) {
-                            return TwoArgFunction(node.type, t.left, t.right)
-                        }
-                    } else {
-                        return t.left
-                    }
-                }
+            is OneArgFunction -> OneArgFunction(t.type, mutate(t.arg, random))
+            is TwoArgFunction -> if (random.nextBoolean()) {
                 TwoArgFunction(t.type, mutate(t.left, random), t.right)
-            } else { // to the right
-                if (random.nextDouble() < mutationChance) {
-                    if (random.nextBoolean()) {
-                        val node = randomNode(initialDepth, random)
-                        if (node is OneArgFunction) {
-                            return OneArgFunction(node.type, t.right)
-                        } else if (node is TwoArgFunction) {
-                            return TwoArgFunction(node.type, t.left, t.right)
-                        }
-                    } else {
-                        return t.right
-                    }
-                }
-                TwoArgFunction(t.type, t.left, mutate(t.right, random))
+            } else {
+                TwoArgFunction(t.type, t.right, mutate(t.right, random))
             }
             else -> throw IllegalStateException("wtf")
         }
@@ -300,7 +261,7 @@ fun main() {
     val variable = "x"
     val left = -3.0
     val right = 3.0
-    val dx = 1E-4
+    val dx = 5E-4
 
 
     val real = integrate(
@@ -312,9 +273,9 @@ fun main() {
         variable,
         EmptyVariableProvider
     )
-    val helper = GeneticFunctionHelper(variable, 4, 6, 0.1, real, left, right, dx)
+    val helper = GeneticFunctionHelper(variable, 4, 6, 0.3, real, left, right, dx)
     println(helper.score(answer(variable)))
-    val genetic = Genetic(helper, MultithreadedRandom(), 20, 12, Variable(variable))
+    val genetic = Genetic(helper, MultithreadedRandom(), 20, 100, Const(1.0))
     val plotter = Plotter(800, 400, .01)
     genetic.train(10000) {
         plotter.plot(real, it)
