@@ -4,8 +4,17 @@ import org.apache.commons.math3.distribution.NormalDistribution
 import org.apache.commons.math3.special.Erf
 import org.apache.commons.math3.util.FastMath
 import org.slf4j.LoggerFactory
+import java.awt.Color
+import java.awt.Dimension
+import java.awt.Graphics
+import java.util.*
+import javax.swing.JFrame
+import javax.swing.JPanel
 import kotlin.math.max
-import kotlin.system.exitProcess
+
+private val constants = listOf(
+    0.0, 1.0, -1.0, Math.PI, Math.E
+)
 
 class GeneticFunctionHelper(
     private val variable: String,
@@ -20,25 +29,6 @@ class GeneticFunctionHelper(
     private val LOG = LoggerFactory.getLogger(GeneticFunctionHelper::class.java)
     private val EPS = 1E-3
 
-    private val constants = listOf(
-        0.0, 1.0, -1.0, Math.PI, Math.E
-    )
-
-    private val oneArgFunctions = listOf<Pair<String, (Double) -> Double>>(
-        //"sin" to FastMath::sin,
-        //"cos" to FastMath::cos,
-        "erf" to Erf::erf
-        //"exp" to {x -> Math.min(Math.exp(x), 1 / EPS) },
-    )
-
-    private val twoArgFunctions = listOf<Triple<String, Int, (Double, Double) -> Double>>(
-        Triple("+", 0, { x, y -> x + y }),
-        Triple("-", 0, { x, y -> x - y }),
-        Triple("*", 1, { x, y -> x * y }),
-        Triple("/", 1, { x, y -> x * Math.signum(y) / (Math.abs(y) + EPS) })
-        //"pow" to { x, y -> Math.min(Math.pow(Math.abs(x) + EPS, y), 1 / EPS) }
-    )
-
     private fun leaf(f: Function) = f is Const || f is Variable
 
     private fun randomNode(depth: Int, random: Random): Function =
@@ -48,15 +38,15 @@ class GeneticFunctionHelper(
                 random.nextBoolean() -> Const(random.nextElement(constants))
                 else -> Const((random.nextDouble() - 0.5) * 1000)
             }
-            oneArgFunctions.isNotEmpty() && random.nextBoolean() -> { // one arg function
-                val (name, fn) = random.nextElement(oneArgFunctions)
-                OneArgFunction(name, fn, randomNode(depth - 1, random))
+            random.nextBoolean() -> { // one arg function
+                val type = random.nextElement(OneArgFunction.Type.values())
+                OneArgFunction(type, randomNode(depth - 1, random))
             }
-            twoArgFunctions.isNotEmpty() -> { // two arg function
-                val (name, priority, fn) = random.nextElement(twoArgFunctions)
-                TwoArgFunction(name, fn, randomNode(depth - 1, random), randomNode(depth - 1, random), priority)
+            // two arg function
+            else -> {
+                val type = random.nextElement(TwoArgFunction.Type.values())
+                TwoArgFunction(type, randomNode(depth - 1, random), randomNode(depth - 1, random))
             }
-            else -> throw IllegalStateException("wtf")
         }
 
     private fun _newInstance(random: Random) = randomNode(initialDepth, random)
@@ -67,16 +57,68 @@ class GeneticFunctionHelper(
         }
         return when (t) {
             is Const -> {
-                Const(t.value * (1 + random.nextDouble() / 5))
+                if (random.nextDouble() > mutationChance) t
+                if (random.nextBoolean()) Const(t.value * (1 + (random.nextDouble() - 0.5) / 5))
+                else randomNode(initialDepth, random)
             }
             is Variable -> {
-                if (random.nextDouble() < mutationChance) randomNode(initialDepth, random) else t
+                if (random.nextDouble() < mutationChance) {
+                    when (random.nextInt(3)) {
+                        0 -> TwoArgFunction(TwoArgFunction.Type.MUL, Const(1 + (random.nextDouble() - 0.5) / 5), t)
+                        1 -> TwoArgFunction(TwoArgFunction.Type.ADD, Const(random.nextDouble()), t)
+                        2 ->  randomNode(initialDepth, random)
+                        else -> throw IllegalStateException("wtf")
+                    }
+                } else t
             }
-            is OneArgFunction -> OneArgFunction(t.name, t.function, mutate(t.arg, random))
+            is OneArgFunction -> {
+                if (random.nextDouble() < mutationChance) {
+                    if (random.nextBoolean()) {
+                        val node = randomNode(initialDepth, random)
+                        if (node is OneArgFunction) {
+                            return OneArgFunction(node.type, t.arg)
+                        } else if (node is TwoArgFunction) {
+                            val left = random.nextBoolean()
+                            return TwoArgFunction(
+                                node.type,
+                                if (left) node.left else t.arg,
+                                if (!left) node.right else t.arg
+                            )
+                        }
+                    } else {
+                        return t.arg
+                    }
+                }
+                OneArgFunction(t.type, mutate(t.arg, random))
+            }
             is TwoArgFunction -> if (random.nextBoolean()) { // to the left
-                TwoArgFunction(t.name, t.function, mutate(t.left, random), t.right, t.priority())
+                if (random.nextDouble() < mutationChance) {
+                    if (random.nextBoolean()) {
+                        val node = randomNode(initialDepth, random)
+                        if (node is OneArgFunction) {
+                            return OneArgFunction(node.type, t.left)
+                        } else if (node is TwoArgFunction) {
+                            return TwoArgFunction(node.type, t.left, t.right)
+                        }
+                    } else {
+                        return t.left
+                    }
+                }
+                TwoArgFunction(t.type, mutate(t.left, random), t.right)
             } else { // to the right
-                TwoArgFunction(t.name, t.function, t.left, mutate(t.right, random), t.priority())
+                if (random.nextDouble() < mutationChance) {
+                    if (random.nextBoolean()) {
+                        val node = randomNode(initialDepth, random)
+                        if (node is OneArgFunction) {
+                            return OneArgFunction(node.type, t.right)
+                        } else if (node is TwoArgFunction) {
+                            return TwoArgFunction(node.type, t.left, t.right)
+                        }
+                    } else {
+                        return t.right
+                    }
+                }
+                TwoArgFunction(t.type, t.left, mutate(t.right, random))
             }
             else -> throw IllegalStateException("wtf")
         }
@@ -93,24 +135,14 @@ class GeneticFunctionHelper(
 
         // linear case
         if (t1 is OneArgFunction && t2 is OneArgFunction) {
-            val (name, fn) = (if (random.nextBoolean()) t1.name to t1.function else t2.name to t2.function)
-            return OneArgFunction(name, fn, cross(t1.arg, t2.arg, random))
+            val type = (if (random.nextBoolean()) t1.type else t2.type)
+            return OneArgFunction(type, cross(t1.arg, t2.arg, random))
         }
 
         // forked case
         if (t1 is TwoArgFunction && t2 is TwoArgFunction) {
-            val (name, priority, fn) = (if (random.nextBoolean()) Triple(
-                t1.name,
-                t1.priority(),
-                t1.function
-            ) else Triple(t2.name, t2.priority(), t2.function))
-            return TwoArgFunction(
-                name,
-                fn,
-                cross(t1.left, t2.left, random),
-                cross(t1.right, t2.right, random),
-                priority
-            )
+            val type = if (random.nextBoolean()) t1.type else t2.type
+            return TwoArgFunction(type, cross(t1.left, t2.left, random), cross(t1.right, t2.right, random))
         }
 
         // finally complicated case of different types
@@ -119,15 +151,13 @@ class GeneticFunctionHelper(
 
         return if (random.nextBoolean()) { // linear
             val forkedArg = if (random.nextBoolean()) forked.left else forked.right
-            OneArgFunction(linear.name, linear.function, cross(linear.arg, forkedArg, random))
+            OneArgFunction(linear.type, cross(linear.arg, forkedArg, random))
         } else { // forked
             val left = random.nextBoolean()
             TwoArgFunction(
-                forked.name,
-                forked.function,
+                forked.type,
                 if (left) cross(linear.arg, forked.left, random) else forked.left,
-                if (!left) cross(linear.arg, forked.right, random) else forked.right,
-                forked.priority()
+                if (!left) cross(linear.arg, forked.right, random) else forked.right
             )
         }
     }
@@ -146,39 +176,48 @@ class GeneticFunctionHelper(
         if (f is OneArgFunction) {
             val arg = optimize(f.arg, random, maxDepth - 1)
             if (arg is Const) {
-                return Const(protect(f.function(arg.value)))
+                return Const(protect(f.type.fn(arg.value)))
             }
+            return if (f.arg === arg) f else OneArgFunction(f.type, arg)
         }
 
         if (f is TwoArgFunction) {
             val left = optimize(f.left, random, maxDepth - 1)
             val right = optimize(f.right, random, maxDepth - 1)
             if (left is Const && right is Const) {
-                return Const(f.function(protect(left.value), protect(right.value)))
+                return Const(f.type.fn(protect(left.value), protect(right.value)))
             }
 
             if (left == right) {
-                if (f.name == "-") return Const(0.0)
-                if (f.name == "/") return Const(1.0)
+                when (f.type) {
+                    TwoArgFunction.Type.SUB -> return Const(0.0)
+                    TwoArgFunction.Type.DIV -> return Const(1.0)
+                }
             }
 
             if (left == Const(0.0)) {
-                when (f.name) {
-                    "+", "-" -> return right
-                    "*", "/" -> return Const(0.0)
+                return when (f.type) {
+                    TwoArgFunction.Type.ADD, TwoArgFunction.Type.SUB -> right
+                    TwoArgFunction.Type.MUL, TwoArgFunction.Type.DIV -> Const(0.0)
                 }
             }
 
             if (right == Const(0.0)) {
-                when (f.name) {
-                    "+", "-" -> return right
-                    "*" -> return Const(0.0)
-                    "/" -> return Const(1 / EPS)
+                return when (f.type) {
+                    TwoArgFunction.Type.ADD, TwoArgFunction.Type.SUB -> right
+                    TwoArgFunction.Type.MUL -> Const(0.0)
+                    TwoArgFunction.Type.DIV -> Const(1 / EPS)
                 }
             }
+
+            if (f.type == TwoArgFunction.Type.SUB && right is Const && right.value < 0) {
+                return TwoArgFunction(TwoArgFunction.Type.ADD, f.left, Const(-right.value))
+            }
+
+            return if (f.left === left && f.right === right) f else TwoArgFunction(f.type, left, right)
         }
 
-        return f
+        throw IllegalStateException("wtf")
     }
 
     private fun depth(t: Function): Int = when {
@@ -195,35 +234,91 @@ class GeneticFunctionHelper(
     override fun newInstance(random: Random) = optimize(_newInstance(random), random, maxDepth)
     override fun mutate(t: Function, random: Random) = optimize(_mutate(t, random), random, maxDepth)
     override fun cross(t1: Function, t2: Function, random: Random) = optimize(_cross(t1, t2, random), random, maxDepth)
-    override fun score(t: Function) = -product(real, t, left, right, dx, variable, EmptyVariableProvider)
-    override fun metrics(): List<Pair<String, (Function) -> Double>> = listOf("mse" to { fn -> mse(real, fn, left, right, dx, variable, EmptyVariableProvider)})
+    override fun score(t: Function) = mse(real, t, left, right, dx, variable, EmptyVariableProvider)
+    override fun metrics(): List<Pair<String, (Function) -> Double>> =
+        listOf("product" to { fn -> product(real, fn, left, right, dx, variable, EmptyVariableProvider) })
+}
+
+class Plotter(width: Int, height: Int, private val scale: Double) {
+    private val colors = listOf<Color>(Color.ORANGE, Color(0, 180, 50), Color.CYAN)
+
+    private val frame = JFrame()
+    private val panel = object : JPanel() {
+        override fun paint(g: Graphics) {
+            g.color = Color.DARK_GRAY
+            g.fillRect(0, 0, width, height)
+            objects.forEachIndexed { i, f ->
+                g.color = colors[i]
+                val left = -width / 2.0 * scale
+                val right = width / 2.0 * scale
+                val dx = scale
+                var x = left
+                val provider = OneVariableProvider("x")
+                provider.set(x)
+                var xo = left
+                var yo = f.eval(provider)
+                x += dx
+                while (x < right) {
+                    provider.set(x)
+                    val xn = x
+                    val yn = f.eval(provider)
+                    g.drawLine(
+                        (xo / scale).toInt() + width / 2,
+                        -(yo / scale).toInt() + height / 2,
+                        (xn / scale).toInt() + width / 2,
+                        -(yn / scale).toInt() + height / 2
+                    )
+                    x += dx
+                    xo = xn
+                    yo = yn
+                }
+            }
+        }
+    }
+    private val objects = Collections.synchronizedList(mutableListOf<Function>())
+
+    init {
+        panel.preferredSize = Dimension(width, height)
+        frame.add(panel)
+        frame.pack()
+        frame.defaultCloseOperation = JFrame.EXIT_ON_CLOSE
+        frame.isVisible = true
+    }
+
+    fun plot(vararg functions: Function) {
+        objects.clear()
+        objects.addAll(functions)
+        panel.repaint()
+    }
+}
+
+fun answer(variable: String): Function {
+    return OneArgFunction(OneArgFunction.Type.ERF, Variable(variable) / FastMath.sqrt(2.0)) / 2.0 + 0.5
 }
 
 fun main() {
     val variable = "x"
-    val left = -5.0
-    val right = 5.0
+    val left = -3.0
+    val right = 3.0
     val dx = 1E-4
 
-    val fn = object {
-        private val dist = NormalDistribution()
-        operator fun invoke(x: Double) = dist.density(x)
-    }
+
     val real = integrate(
         "a",
-        OneArgFunction("norm", { x -> fn(x) }, Variable(variable)),
+        OneArgFunction(OneArgFunction.Type.NORM, Variable(variable)),
         left,
         right,
         dx,
         variable,
         EmptyVariableProvider
     )
-    val helper = GeneticFunctionHelper(variable, 4, 5, 0.1, real, left, right, dx)
-    println(helper.score(OneArgFunction("sqr", { x -> Erf.erf(x / FastMath.sqrt(2.0)) / 2 }, Variable(variable))))
-    val genetic = Genetic(helper, MultithreadedRandom(), 50, 10)
-    genetic.train(100)
+    val helper = GeneticFunctionHelper(variable, 4, 6, 0.1, real, left, right, dx)
+    println(helper.score(answer(variable)))
+    val genetic = Genetic(helper, MultithreadedRandom(), 20, 12, Variable(variable))
+    val plotter = Plotter(800, 400, .01)
+    genetic.train(10000) {
+        plotter.plot(real, it)
+    }
     val best = genetic.best().first
     println(best)
-
-    exitProcess(0)
 }
