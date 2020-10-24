@@ -53,7 +53,7 @@ class Genetic<T>(
 
     fun best() = population.first()
 
-    fun train(epoch: Int, callback: ((T) -> Unit)? = null) {
+    fun train(epoch: Int, callback: ((Pair<Int, T>) -> Unit)? = null) {
         repeat(epoch) {
             val start = System.currentTimeMillis()
             val newPopulation = mutableListOf<Pair<T, Double>>()
@@ -124,11 +124,13 @@ class Genetic<T>(
 
             val end = System.currentTimeMillis()
 
-            print("Epoch ${String.format("%3d", it)}:    time  ${String.format("%3d", end - start)} ms,    score  ${String.format("%.2f", geneticHelper.score(population[0].first))}, ")
-            geneticHelper.metrics().forEach { (name, fn) -> print("    $name  ${String.format("%.4f", fn(population[0].first))}") }
-            println(",    best  ${population.first().first}")
+            val best = population.first()
 
-            callback?.invoke(population.first().first)
+            print("Epoch ${String.format("%3d", it)}:    time  ${String.format("%3d", end - start)} ms,    score  ${String.format("%.2f", best.second)}, ")
+            //geneticHelper.metrics().forEach { (name, fn) -> print("    $name  ${String.format("%.4f", fn(population[0].first))}") }
+            println(",    best  ${best.first}")
+
+            callback?.invoke(it to best.first)
         }
     }
 
