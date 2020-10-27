@@ -1,6 +1,5 @@
 package com.alsaril
 
-import org.apache.commons.math3.distribution.NormalDistribution
 import org.apache.commons.math3.util.FastMath
 import java.awt.Color
 import java.awt.Dimension
@@ -179,8 +178,8 @@ class GeneticFunctionHelper(
 
             if (left == Const(0)) {
                  when (f.type) {
-                    BinaryFunction.Type.ADD, BinaryFunction.Type.SUB -> return right
-                    BinaryFunction.Type.MUL, BinaryFunction.Type.DIV -> return Const(0)
+                     BinaryFunction.Type.ADD, BinaryFunction.Type.SUB -> return right
+                     BinaryFunction.Type.MUL, BinaryFunction.Type.DIV -> return Const(0)
                     //TwoArgFunction.Type.POW -> Const(0)
                 }
             }
@@ -189,9 +188,9 @@ class GeneticFunctionHelper(
 
             if (right == Const(0)) {
                  when (f.type) {
-                    BinaryFunction.Type.ADD, BinaryFunction.Type.SUB -> return right
-                    BinaryFunction.Type.MUL -> return Const(0)
-                    BinaryFunction.Type.DIV -> return Const(100000)
+                     BinaryFunction.Type.ADD, BinaryFunction.Type.SUB -> return right
+                     BinaryFunction.Type.MUL -> return Const(0)
+                     BinaryFunction.Type.DIV -> return Const(100000)
                     //TwoArgFunction.Type.POW -> Const(1)
                 }
             }
@@ -282,29 +281,54 @@ class Plotter(width: Int, height: Int, private val scale: Double, private val Y:
 }
 
 fun main() {
-    val generator = functionGenerator()
-    generator.take(300).forEach {
-        println(it)
+    val variable = "x"
+    val function = object : Function {
+        fun density(x: Double, mean: Double, sigma: Double): Double {
+            return FastMath.exp(logDensity(x, mean, sigma))
+        }
+
+        fun logDensity(x: Double, mean: Double, sigma: Double): Double {
+            val x0: Double = x - mean
+            val x1: Double = x0 / sigma
+            return -0.5 * x1 * x1 - FastMath.log(sigma) + 0.5 * FastMath.log(2 * FastMath.PI)
+        }
+
+        override fun eval(provider: ArgumentProvider): Double {
+            val x = provider.get(variable)!!
+            val m = provider.get("m")!!
+            val s = FastMath.abs(provider.get("s")!!)
+            return density(x, m, s)
+        }
+
+        override fun arity() = 3
+        override fun priority() = 100
+        override fun vars() = setOf(variable, "m", "s")
+        override fun toString() = "None"
+        override fun equals(other: Any?) = false
+        override fun hashCode() = 0
     }
-//    val name = "x"
-//    val function = object : Function {
-//        override fun eval(provider: ArgumentProvider): Double {
-//            val x = provider.get(name)!!
-//            val mu = provider.get("m")!!
-//            val sigma = provider.get("s")!!
-//            return NormalDistribution(mu, FastMath.abs(sigma) + 1E-5).density(x)
-//        }
-//
-//        override fun arity() = 3
-//        override fun priority() = 100
-//        override fun vars() = setOf(name, "m", "s")
-//        override fun toString() = "None"
-//        override fun equals(other: Any?) = false
-//        override fun hashCode() = 0
-//    }
-//    val left = -3.0
-//    val right = 3.0
-//    val dx = 1E-3
+    val left = -3.0
+    val right = 3.0
+    val dx = 1E-3
+
+    val random = MultithreadedRandom()
+
+    val parameters = function.vars() - setOf(variable)
+    val variations = (1..5).map {
+        val provider = MultiVariableProvider(parameters.map { v -> v to (random.nextDouble() - 0.5) * 3 })
+        integrate("variation$it", function, left, right, dx, variable, provider) to provider
+    }
+
+    val generator = functionGenerator(function.vars())
+    var i = 0
+    generator
+        .filter { it.vars().contains("x") }
+        .mapParallel(100) {
+            if (i % 10000 == 0) println("$i: $it");
+            it to variations.asSequence().map { (f, p) -> mse(f, it, left, right, dx, variable, p) }.sum()
+        }.minify { it.second }
+        .forEach { if (i++ % 10000 == 0) println(it) }
+
 //
 //    val random = MultithreadedRandom()
 //    val helper = GeneticFunctionHelper(function, name, 10, left, right, dx, random, 3, 6, 0.3)

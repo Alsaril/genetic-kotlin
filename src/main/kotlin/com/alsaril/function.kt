@@ -12,17 +12,25 @@ object EmptyVariableProvider : ArgumentProvider {
 }
 
 class FallbackProvider(private vararg val provider: ArgumentProvider) : ArgumentProvider {
-    override fun get(name: String) = provider.asSequence().map { it.get(name) }.filterNotNull().firstOrNull()
+    override fun get(name: String): Double? {
+        for (p in provider) {
+            val value = p.get(name)
+            if (value != null) {
+                return value
+            }
+        }
+        return null
+    }
 }
 
 class OneVariableProvider(private val name: String) : ArgumentProvider {
-    private var value = 0.0
+    private var value: Double? = 0.0
 
     fun set(value: Double) {
         this.value = value
     }
 
-    override fun get(name: String) = if (name == this.name) value else null
+    override fun get(name: String) = if (name.equals(this.name)) value else null
 }
 
 class MultiVariableProvider(values: List<Pair<String, Double>>) : ArgumentProvider {
@@ -95,7 +103,13 @@ class UnaryFunction(
     ) {
         ERF("erf", Erf::erf),
         SQRT("sqrt", FastMath::sqrt),
-        EXP("exp", { x -> FastMath.min(FastMath.exp(x), 1E10) });
+//        SIGMA("σ", { x -> 1 / (1 + FastMath.exp(-x)) }),
+//        REVERSE_SIGMA("σ'", { x -> when {
+//            x >= 1 -> 1E5
+//            x <= 0 -> -1E5
+//            else -> - FastMath.log(1 / x - 1)
+//        } }),
+     //   EXP("exp", { x -> FastMath.min(FastMath.exp(x), 1E5) });
     }
 }
 
@@ -121,13 +135,13 @@ class BinaryFunction(
 
     enum class Type(
         val symbol: String,
-        val fn: (Double, Double) -> Double,
+        val fn: BiFunction,
         val priority: Int
     ) {
-        ADD("+", { x, y -> x + y }, 0),
-        SUB("-", { x, y -> x - y }, 0),
-        MUL("*", { x, y -> x * y }, 1),
-        DIV("/", { x, y -> x / y }, 1);
+        ADD("+", BiFunction { x, y -> x + y }, 0),
+        SUB("-", BiFunction { x, y -> x - y }, 0),
+        MUL("*", BiFunction { x, y -> x * y }, 1),
+        DIV("/", BiFunction { x, y -> x / y }, 1);
         //NORM("norm",  { x, y -> NormalDistribution(0.0, FastMath.abs(y) + 0.001).density(x) }, 2);
        // POW("^", { x, y -> FastMath.min(FastMath.pow(FastMath.abs(x) + 1E-10, y), 1E10) }, 2)
     }

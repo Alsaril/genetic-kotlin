@@ -1,6 +1,5 @@
 package com.alsaril
 
-import org.junit.Assert
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -11,8 +10,18 @@ class GeneratorTest {
     }
 
     @Test
+    fun skipTest() {
+        assertEquals((5 until 15).toList(), SequenceGenerator().skip(5).take(10).toList())
+    }
+
+    @Test
     fun mapTest() {
         assertEquals((0 until 10).map { it * 2 }.toList(), SequenceGenerator().take(10).map { it * 2 }.toList())
+    }
+
+    @Test
+    fun filterTest() {
+        assertEquals((0 until 10).filter { it % 3 == 0 }.toList(), SequenceGenerator().take(10).filter { it % 3 == 0 }.toList())
     }
 
     @Test
